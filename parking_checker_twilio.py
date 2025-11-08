@@ -14,8 +14,11 @@ BASE_URL = "https://parkingattendant.app/policy/mwq14sf04578bekqv3tbte7r3w/space
 FLOORS_TO_MONITOR = [2, 3, 4]  # Only alert for floors 2-4
 ALL_CHECK_FLOORS   = [2, 3, 4, 5, 6, 7]  # Still check all floors for logging
 
-# Discord webhook configuration
-DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "https://discord.com/api/webhooks/1436599795232800849/MKz3TJ8af4JT-q9efTQjlpcIkPF4_tUYUalkmOXJlN_08Ds6PCDkjuC2Q0EvCResn1fN")
+# Discord webhook configuration (loaded from environment variable)
+DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
+
+if not DISCORD_WEBHOOK_URL:
+    raise ValueError("DISCORD_WEBHOOK_URL environment variable is not set")
 
 # -------------------------
 
