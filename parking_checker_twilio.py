@@ -85,10 +85,11 @@ async def main():
 
     if alerts:
         body = "🚗 Parking openings:\n" + "\n".join(alerts)
-        send_discord_notification(body)
-        print(f"[{datetime.now()}] Notification sent:\n{body}")
     else:
-        print(f"[{datetime.now()}] No openings on monitored floors: {FLOORS_TO_MONITOR}")
+        body = "❌ No spots available on floors 2-4"
+
+    send_discord_notification(body)
+    print(f"[{datetime.now()}] Notification sent:\n{body}")
 
 if __name__ == "__main__":
     asyncio.run(main())
