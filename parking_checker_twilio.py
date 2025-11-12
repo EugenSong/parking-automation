@@ -9,87 +9,115 @@ from playwright.async_api import async_playwright, TimeoutError as PWTimeoutErro
 
 # --- CONFIGURATION ---
 
-BASE_URL = "https://parkingattendant.app/policy/mwq14sf04578bekqv3tbte7r3w/spaces/map?level={}"
+PARKING_WEBSITE_URL = "https://parkingattendant.app/policy/mwq14sf04578bekqv3tbte7r3w/spaces/map?level={}"
 
-FLOORS_TO_MONITOR = [2, 3, 4]  # Only alert for floors 2-4
-ALL_CHECK_FLOORS   = [2, 3, 4, 5, 6, 7]  # Still check all floors for logging
+PREFERRED_FLOORS_TO_MONITOR = [2, 3, 4]
+ALL_FLOORS_TO_CHECK = [2, 3, 4, 5, 6, 7]
 
 # Discord webhook configuration (loaded from environment variable)
-DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
+discord_webhook_url = os.getenv("DISCORD_WEBHOOK_URL")
 
-if not DISCORD_WEBHOOK_URL:
+if not discord_webhook_url:
     raise ValueError("DISCORD_WEBHOOK_URL environment variable is not set")
 
 # -------------------------
 
-def send_discord_notification(message: str):
+def send_notification_to_discord(notification_message: str):
     """Send notification to Discord via webhook"""
-    payload = {"content": message}
-    resp = requests.post(DISCORD_WEBHOOK_URL, json=payload)
-    if resp.status_code == 204:
+    message_payload = {"content": notification_message}
+    response = requests.post(discord_webhook_url, json=message_payload)
+
+    if response.status_code == 204:
         print(f"[{datetime.now()}] Discord notification sent successfully")
     else:
-        print(f"[{datetime.now()}] Failed to send Discord notification — status {resp.status_code}, response {resp.text}")
+        print(f"[{datetime.now()}] Failed to send Discord notification — status {response.status_code}, response {response.text}")
 
-async def fetch_floor_statuses():
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        page = await browser.new_page()
-        floors = {}
-        for floor_num in ALL_CHECK_FLOORS:
-            url = BASE_URL.format(floor_num)
-            print(f"[{datetime.now()}] Navigating to {url}")
-            await page.goto(url, timeout=90000)
+async def scrape_parking_availability_for_all_floors():
+    """Scrape the parking website and return availability status for each floor"""
+    async with async_playwright() as playwright:
+        browser = await playwright.chromium.launch(headless=True)
+        parking_page = await browser.new_page()
+        floor_availability_statuses = {}
+
+        for floor_number in ALL_FLOORS_TO_CHECK:
+            floor_url = PARKING_WEBSITE_URL.format(floor_number)
+            print(f"[{datetime.now()}] Navigating to {floor_url}")
+
+            await parking_page.goto(floor_url, timeout=90000)
+
             try:
-                await page.wait_for_selector("figure.level", timeout=15000)
+                await parking_page.wait_for_selector("figure.level", timeout=15000)
             except PWTimeoutError:
-                print(f"[{datetime.now()}] Timeout waiting for floor {floor_num}")
-            await page.wait_for_timeout(5000)
+                print(f"[{datetime.now()}] Timeout waiting for floor {floor_number}")
 
-            el = await page.query_selector("figure.level")
-            if not el:
-                print(f"[{datetime.now()}] Could not find figure.level for floor {floor_num}")
+            await parking_page.wait_for_timeout(5000)
+
+            floor_container = await parking_page.query_selector("figure.level")
+            if not floor_container:
+                print(f"[{datetime.now()}] Could not find parking data for floor {floor_number}")
                 continue
 
-            lvl_data   = await el.query_selector("h1 data.level")
-            floor_val  = await (lvl_data.get_attribute("value") if lvl_data else str(floor_num))
-            p_data     = await el.query_selector("p data[value]")
-            status_txt = (await p_data.inner_text()).strip() if p_data else "unknown"
+            floor_level_element = await floor_container.query_selector("h1 data.level")
+            floor_value = await (floor_level_element.get_attribute("value") if floor_level_element else str(floor_number))
 
-            label = f"Floor {floor_val}"
-            floors[label] = status_txt
+            availability_data_element = await floor_container.query_selector("p data[value]")
+            availability_status_text = (await availability_data_element.inner_text()).strip() if availability_data_element else "unknown"
+
+            floor_label = f"Floor {floor_value}"
+            floor_availability_statuses[floor_label] = availability_status_text
 
         await browser.close()
-        return floors
+        return floor_availability_statuses
 
-async def main():
-    current = await fetch_floor_statuses()
-    print(f"[{datetime.now()}] Current statuses: {current}")
+def extract_available_spot_count_from_status(availability_status: str) -> int:
+    """Parse the availability status text to extract the number of available spots"""
+    if " of " not in availability_status:
+        return 0
 
-    alerts = []
-    for floor_label, status in current.items():
+    try:
+        available_spots = int(availability_status.split(" of ")[0])
+        return available_spots
+    except ValueError:
+        return 0
+
+
+def build_parking_alerts_for_preferred_floors(all_floor_statuses: dict) -> list:
+    """Check preferred floors and build alert messages for any available spots"""
+    parking_alerts = []
+
+    for floor_label, availability_status in all_floor_statuses.items():
         try:
-            floor_num = int(floor_label.split()[1])
-        except:
+            floor_number = int(floor_label.split()[1])
+        except (IndexError, ValueError):
             continue
-        if floor_num in FLOORS_TO_MONITOR:
-            if " of " in status:
-                try:
-                    avail_count = int(status.split(" of ")[0])
-                except:
-                    avail_count = None
-                if avail_count and avail_count > 0:
-                    alerts.append(f"{floor_label}: {status}")
-            elif "available" in status.lower():
-                alerts.append(f"{floor_label}: {status}")
 
-    if alerts:
-        body = "🚗 Parking openings:\n" + "\n".join(alerts)
+        if floor_number not in PREFERRED_FLOORS_TO_MONITOR:
+            continue
+
+        available_spot_count = extract_available_spot_count_from_status(availability_status)
+
+        if available_spot_count > 0:
+            parking_alerts.append(f"{floor_label}: {availability_status}")
+        elif "available" in availability_status.lower():
+            parking_alerts.append(f"{floor_label}: {availability_status}")
+
+    return parking_alerts
+
+
+async def check_parking_and_notify():
+    """Main workflow: scrape parking data, check for availability, and send notifications"""
+    all_floor_statuses = await scrape_parking_availability_for_all_floors()
+    print(f"[{datetime.now()}] Current statuses: {all_floor_statuses}")
+
+    parking_alerts = build_parking_alerts_for_preferred_floors(all_floor_statuses)
+
+    if parking_alerts:
+        notification_message = "🚗 Parking openings:\n" + "\n".join(parking_alerts)
     else:
-        body = "❌ No spots available on floors 2-4"
+        notification_message = "❌ No spots available on floors 2-4"
 
-    send_discord_notification(body)
-    print(f"[{datetime.now()}] Notification sent:\n{body}")
+    send_notification_to_discord(notification_message)
+    print(f"[{datetime.now()}] Notification sent:\n{notification_message}")
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(check_parking_and_notify())
