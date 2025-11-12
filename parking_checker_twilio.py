@@ -98,8 +98,6 @@ def build_parking_alerts_for_preferred_floors(all_floor_statuses: dict) -> list:
 
         if available_spot_count > 0:
             parking_alerts.append(f"{floor_label}: {availability_status}")
-        elif "available" in availability_status.lower():
-            parking_alerts.append(f"{floor_label}: {availability_status}")
 
     return parking_alerts
 
